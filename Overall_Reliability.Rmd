@@ -1,0 +1,23 @@
+---
+title: "System-wide Reliability Scores (Route Level)"
+output: html_notebook
+---
+
+```{r}
+rel_avgs <- read.csv("/Users/emmettmckinney/Documents/CodeAcademy/Bus_Ridership/data_for_viz/MBTA_Reliability_Fall_2019.csv")
+  
+rel_avgs <- rel_avgs %>%
+  select(-c("gtfs_route_short_name","gtfs_route_long_name","cancelled_numerator","metric_type")) %>%
+  mutate(on_time_rate = otp_numerator/otp_denominator) %>%
+  mutate(service_date = substring(service_date, 0, 10)) %>%
+  filter(!is.nan(on_time_rate)) 
+
+rel_overall <- rel_avgs %>% group_by(service_date, peak_offpeak_ind) %>% 
+  summarise(
+  on_time_rate = mean(on_time_rate)
+) 
+
+write.csv(rel_overall, file ="/Users/emmettmckinney/Documents/CodeAcademy/Bus_Ridership/data_for_viz/Daily_Bus_Reliability_Fall_2019.csv")
+
+```
+

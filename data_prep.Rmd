@@ -1,0 +1,309 @@
+---
+title: "Bus_Ridership_Data_Prep"
+author: "Emmett"
+date: "11/20/2020"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(httr)
+library(jsonlite)
+library(tidycensus)
+library(purrr)
+library(sf)
+library(leaflet)
+library(tidytransit)
+library(ggplot2)
+library(plotly)
+library(tidyverse)
+```
+
+Part 1: Get DATA
+
+Read in MBTA GTFS File
+```{r}
+##Read in MBTA GTFS##
+
+gtfs <- read_gtfs("https://cdn.mbta.com/MBTA_GTFS.zip") 
+gtfs_sf <- gtfs_as_sf(gtfs)
+lines <- get_route_geometry(gtfs_sf) %>% st_transform(4326)
+st_write(lines, "bus_lines.geojson")
+```
+
+
+
+Select Inputs
+```{r}
+##Select Lines and Service You Want
+route_id_select <- "47" ##input numeric later
+service_id_select <- gtfs$calendar %>% pull(service_id) #switch for weekday/weekend service
+period_select <- "AM_PEAK"
+peak_select <- "PEAK"
+day_type_select <- "weekday" ##note: only weekend service has "OFF_PEAK." Weekday service subdivided 
+var_select <- "average_offs"
+dir_select <- "0"
+```
+
+
+```{r}
+## Build Map of Rail Lines
+
+#rail_lines <- gtfs[["routes"]] %>% filter(route_desc %in% c("Rapid Transit","Commuter Rail")) %>%
+#  left_join(lines, by = "route_id") %>%
+#  mutate(route_color = paste0("#",route_color))
+
+#rail_lines <- st_as_sf(rail_lines) %>% st_transform(4326) 
+
+rail_pal <- colorFactor(rail_lines$route_color[0:21], rail_lines$route_id[0:21], ordered = TRUE, reverse = FALSE)
+
+#t_stops <- filter_stops(gtfs, service_id_select, rail_lines$route_id) %>% 
+#  select("stop_id","stop_lat","stop_lon", "stop_name","platform_name","wheelchair_boarding") %>% as.data.frame()
+
+#t_stops_sf <- st_as_sf(t_stops, coords = c("stop_lon","stop_lat"), remove = FALSE, crs = 4326) 
+
+st_write(t_stops_sf, "t_stops.geojson")
+st_write(rail_lines, "rail_lines.geojson")
+
+rail_lines <- st_read("rail_lines.geojson")
+t_stops_sf <- st_read("t_stops.geojson")
+
+## Add this to background of Bus Map
+
+leaflet(t_stops_sf) %>% addProviderTiles(providers$CartoDB.DarkMatter) %>%
+  setView(lng = -71.100003, lat = 42.340479, zoom = 13) %>%
+  addCircleMarkers(lat = t_stops_sf$stop_lat, lng = t_stops_sf$stop_lon, radius = 3, fillColor = 'white', color = 'white', weight = 1.0) %>% 
+  addPolylines(data = rail_lines, weight = 2, color = ~rail_pal(route_id), popup = paste(rail_lines$route_id))
+  
+```
+
+
+
+C) Route + Line Geometries
+```{r}
+
+##GET BUS STOPS DATA
+stops <- gtfs$stops %>% 
+  filter(vehicle_type == 3) %>%
+  select("stop_id","stop_lat","stop_lon", "stop_name", "wheelchair_boarding") %>%
+  mutate(stop_id = as.integer(stop_id)) %>% st_as_sf(remove = FALSE, crs = 4326, coords = c("stop_lon","stop_lat"))
+
+st_write(stops, "bus_stops.geojson")
+
+stops_tbl <- gtfs$stops %>% 
+  filter(vehicle_type == 3) %>%
+  select("stop_id","stop_lat","stop_lon", "stop_name", "wheelchair_boarding") %>%
+  mutate(stop_id = as.integer(stop_id)) 
+
+stops_sf <- st_as_sf(stops_tbl, coords = c("stop_lon", "stop_lat"), 4326) 
+
+%>%
+  st_transform(4326)
+
+#Get human readable trip name
+trips <- gtfs$trips %>% select(route_id, direction_id, trip_headsign) %>% distinct_at(c("route_id", "direction_id", "trip_headsign"))
+
+write.csv(trips, "/Users/emmettmckinney/Documents/CodeAcademy/Bus_Ridership/data_for_viz/trips.csv")
+```
+
+
+A) Reliability Data (ROUTE LEVEL)
+```{r}
+## GET RELIABILITY DATA ## 
+
+rel_route <- read.csv("/Users/emmettmckinney/Documents/CodeAcademy/Bus_Ridership/data_for_viz/MBTA_Reliability_Fall_2019.csv") %>%
+  select(-c("gtfs_route_short_name","gtfs_route_long_name","metric_type","cancelled_numerator")) %>%
+  filter(gtfs_route_id == route_id_select) %>% 
+  mutate(on_time_rate = otp_numerator/otp_denominator) %>% #calculate on-time rate for date range
+  mutate(service_date = substring(service_date, 0, 10)) %>%
+  mutate(service_date = strptime(as.character(service_date), "%Y/%m/%d") %>% format("%Y-%m-%d"))
+
+rel_overall <- read.csv("/Users/emmettmckinney/Documents/CodeAcademy/Bus_Ridership/data_for_viz/Daily_Bus_Reliability_Fall_2019.csv") %>%
+  mutate(service_date = strptime(as.character(service_date), "%Y/%m/%d") %>% format("%Y-%m-%d") )##read in local file, calculated using code in "Overall_Reliability.Rmd" file
+
+rel_chart <- rel_route %>% group_by(peak_offpeak_ind) %>%
+  select(gtfs_route_id, on_time_rate, peak_offpeak_ind, service_date) %>%
+  rename("rte_on_time_rate" = on_time_rate) %>% 
+  left_join(rel_overall, by = c("peak_offpeak_ind","service_date")) %>% 
+              rename("route" = rte_on_time_rate, "overall" = on_time_rate) %>%
+              pivot_longer(rel_chart, 
+              cols = c("route","overall"), 
+              names_to = "type", 
+              values_to = "on_time_rate") %>%
+              mutate(type = as.factor(type))
+
+```
+
+
+B) RIDERSHIP DATA (STOP LEVEL)
+
+```{r}
+
+## GET RIDERSHIP DATA ## 
+riders <- read.csv('/Users/emmettmckinney/Documents/CodeAcademy/Bus_Ridership/data_for_viz/MBTA_Bus_Ridership_by_Time_Period%2C_Season%2C_Route_Line%2C_and_Stop.csv') %>%
+  filter(time_period_name == period_select,
+         day_type_name == day_type_select,
+         route_id == route_id_select,
+         direction_id == dir_select
+         )
+```
+
+
+Part 2: VISUALIZATIONS
+
+```{r}
+##LEAFLET MAP FOR BOARDINGS & ALIGHTINGS AT STOPS##
+
+rider_viz <- riders %>% select(c("route_id","direction_id","day_type_name","time_period_name","stop_id",all_of(var_select),"num_trips","ObjectId")) %>% 
+    rename_at(vars(starts_with('average')), funs(paste0('var'))) %>% #rename selected variable to standard column so leaflet can read it
+  left_join(stops, by = "stop_id") %>%
+  left_join(trips, by = c("route_id","direction_id"))
+
+##Set Up Pallette
+
+rider_pal <- colorBin("Greens", domain = rider_viz$var, bins = 5)
+
+off_pal <- colorBin("Reds", domain = rider_viz$var, bins = 5)
+on_pal <- colorBin("Greens", domain = rider_viz$var, bins = 5)
+load_pal <- colorBin("Blues", domain = rider_viz$var, bins = 5)
+
+#rider_pal <- if_else("average_ons" %in% as.character(var_select), on_pal, ## use a switch to build this in reactive object.
+             # if_else("average_offs"%in% as.character(var_select), off_pal, load_pal))
+                                                   
+          
+## Map Data 
+var_txt <- if_else(var_select == "average_ons", 'Avg. Boardings',
+                   if_else(var_select == "average_offs", "Avg. Alightings", "Avg. Load"))
+
+leaflet(lines %>% filter(route_id == route_id_select)) %>%
+            setView(lng = -71.100003, lat = 42.340479, zoom = 13) %>%
+            addProviderTiles(providers$CartoDB.DarkMatter,
+                             options = providerTileOptions(opacity = 0.8))  %>%
+            addPolylines(color = "white", weight = 1) %>%
+            addCircleMarkers(lng = rider_viz$stop_lon, lat = rider_viz$stop_lat, radius = rider_viz$var, fillColor = ~rider_pal(rider_viz$var), 
+                             color = ~rider_pal(rider_viz$var), 
+                             fillOpacity = 0.5, 
+                             popup = paste0("Stop: ", rider_viz$stop_name, "<br>", var_txt, " ", rider_viz$var, "<br>", "Destination: ", rider_viz$trip_headsign), 
+                             options = popupOptions(autoPan = TRUE, riseOnHover = TRUE))
+
+```
+
+```{r}
+##LEAFLET MAP FOR RELIABILITY ON LINE##
+
+rel_viz <- rel_route %>% left_join(lines, by = c("gtfs_route_id" = "route_id"))
+rel_viz <- rel_viz %>% st_as_sf
+
+rel_pal <- colorBin("RdYlGn", domain = reel_viz$on_time_rate, bins = 5) 
+
+rel_summary <- rel_viz %>% group_by(gtfs_route_id) %>% summarize(
+  on_time_rate = mean(on_time_rate))
+
+leaflet(rel_summary) %>%
+            setView(lng = -71.100003, lat = 42.340479, zoom = 13) %>%
+            addProviderTiles(providers$CartoDB.DarkMatter,
+                             options = providerTileOptions(opacity = 0.8))  %>%
+            addPolylines(color = ~rel_pal(on_time_rate), weight = 2)
+      
+```
+
+```{r}
+## VIOLIN PLOT OF ROUTE RELIABILITY Relative to others ##
+
+ggplot(rel_chart, aes(fill = type, color = type, x = type, y = on_time_rate)) + 
+  geom_violin(position="dodge", alpha=0.5, outlier.colour="transparent",
+              draw_quantiles = c(0.25, 0.5, 0.75)) +
+  geom_jitter(height = 0, width = 0.05, color = "black") +
+  
+  ylab("On Time %") +
+  theme(legend.title = element_blank()) +
+  xlab(element_blank())
+#v
+
+  
+```
+
+```{r}
+## ROUTE PROFILE 
+
+rider_chart <- riders %>% select(c("ObjectId", "route_id","stop_id","stop_sequence","stop_name","average_ons","average_offs")) %>% 
+ pivot_longer(cols = c("average_ons","average_offs"), names_to = "type", values_to = "count")
+
+rider_load <- riders %>% select(c("ObjectId", "route_id","stop_id","stop_sequence","stop_name","average_load")) %>% 
+ pivot_longer(cols = "average_load", names_to = "type", values_to = "count")
+
+p <- ggplot(rider_chart, (aes(x = stop_sequence, y=count, text = stop_name, fill=type))) +
+        geom_bar(position = "stack", stat="identity") +
+        geom_step(data = rider_load, color = "#70dcf0", size = 0.8, group = 1)  +
+        scale_fill_manual(values = c("#70dcf0","#f768a1","#66c2a4"), labels = c("Pass. Load", "Alightings","Boardings")) +
+  theme(legend.title = element_blank(), panel.background = element_blank()) +
+    xlab("Stop Sequence") +
+    ylab("Count")
+
+p
+```
+
+
+```{r}
+p
+
+fancy <- ggplotly(p, tooltip = c("count","stop_name"))
+
+fancy
+
+```
+
+
+
+
+Ideas:: 
+
+DONE __ Passenger Crowding: Identify route segments based on average load at stops where the passenger load is highest
+
+DONE ---- Overview: download reliability data for all lines, summarize over whole time period, group by peak / off-peak, direction, turn rail lines on & off.
+
+Default leaflet plot has all bus routes at very low opacity, the 1 Route highlighted.
+
+Botton left panel: Ridership plot showing the route profile over the course of the route (stacked bar chart like BlueBike Viz)
+
+Botton right panel: Reliability plot (violin/box plot showing reliabilitiy, day-to-day, vs. average for all routes in that period. Will need to download local summary of all routes for Fall 2019 to do this.)
+
+Right side panel:
+
+Controls / Instructions:
+ - select routes
+ - select peak / off-peak
+
+statistics: 
+  - "You've selected Route #86, 
+  -  Direction
+  -  Headways,
+  -  bus type, 
+  -  demographics of riders (CTPS Ridership Survey?), 
+  -  reliability ranking
+  -  designation as a key route.
+  
+  - You've selected stop: (on click, other routes that stop there also highlight)
+  - Name: Washington St @ Sq.
+  - Routes that stop here:
+  
+
+
+Part 2: Summarizing Data
+
+```{r}
+##SPATIAL ANALYSIS OF BUS ROUTES## — figure out demographics of areas around line
+```
+
+```{r}
+##SPATIAL ANALYSIS OF BUS STOPS - figure out demographics of areas around bus stops
+```
+
+```{r}
+##SUMMARIZE STOP DATA
+```
+
+```{r}
+#SUMMARIZE RELIABILITY DATA
+```
+

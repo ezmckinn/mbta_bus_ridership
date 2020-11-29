@@ -1,0 +1,38 @@
+---
+title: "Old_API_Calls"
+author: "Emmett"
+date: "11/24/2020"
+output: html_document
+---
+
+Retired API Calls 
+
+```{r}
+##RELIABILITY##
+
+reliability <- GET(
+  
+paste0("https://services1.arcgis.com/ceiitspzDAHrdGO1/arcgis/rest/services/MBTA_Rail_and_Bus_Reliability/FeatureServer/0/query?where#=service_date%20%3E%3D%20TIMESTAMP%20'2019-09-01%2000%3A00%3A00'%20AND%20service_date%20%3C%3D%20TIMESTAMP%20'2019-11-30%2000%3A00%3A0#0'%20AND%20mode_type%20%3D%20'BUS'%20AND%20gtfs_route_id%20%3D%20'",route_id_select,"'%20AND%20peak_offpeak_ind%20%3D%20'",peak_select#,"'&outFields=service_date,gtfs_route_id,gtfs_route_desc,route_category,mode_type,peak_offpeak_ind,otp_numerator,otp_denominator,Objec#tId&outSR=4326&f=json"))
+
+reliability <- content(reliability, as = "text", type = NULL, encoding = "UTF-8") %>% fromJSON() #parse response
+reliability <- reliability[[5]][[1]] %>% as.data.frame() ## grab results from list and convert it to df
+
+# mutate(service_date = as.POSIXct.numeric(service_date/1000, origin = "1970-01-01", format = "%Y-%m-%d")) %>% # convert unix stamp to date, accounting for miliseconds
+#  mutate(service_date = as.character(service_date)) %>% #reformat date to character
+
+
+```
+
+```{r}
+##RIDERSHIP##
+
+library(httr)
+
+riders <- GET(paste0("https://services1.arcgis.com/ceiitspzDAHrdGO1/arcgis/rest/services/MBTA_Bus_Ridership_by_Time_Period_Season_Rou#te_Stop/FeatureServer/0/query?where=time_period_name%20%3D%20'",period_select(),"'%20AND%20season%20%3D%20'FALL%202019'%20AND%20directi#on_id%20%3D%20'",dir_select(),"'%20AND%20route_id%20%3D%20'",route_id_select(),"'%20AND%20day_type_name%20%3D%20'",day_type_select(),"'&out#Fields=*&outSR=4326&f=json")) 
+
+riders <- content(riders, as = "text", type = NULL, encoding = "UTF-8") %>% fromJSON #parse response
+riders <- riders[[5]][[1]] #get data frame from list
+
+riders
+```
+

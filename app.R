@@ -22,7 +22,7 @@ time_periods <- read.csv("./data_for_viz/time_periods.csv", header = TRUE)
 stops <- st_read("./data_for_viz/bus_stops.geojson")
 
 #Rail Stops
-t_stops_sf <- st_read("./data_for_viz/t_stops.geojson")
+t_stops <- st_read("./data_for_viz/t_stops_color.geojson")
 
 #Bus Line Geometries
 lines <- st_read("./data_for_viz/bus_lines.geojson")
@@ -110,7 +110,7 @@ server <- function(input, output) {
         left_join(stops, by = "stop_id") %>%
         left_join(trips, by = c("route_id","direction_id")) })
     
-    map_lines <- reactive({ lines %>% filter(route_id == route_id_select()) })
+    map_lines <- reactive({ lines %>% filter(route_id == route_id_select())})
     
     var_txt <- reactive ({ if_else(var_select() == "average_ons", 'Avg. Boardings',
                        if_else(var_select() == "average_offs", "Avg. Alightings", "Avg. Load")) })
@@ -120,6 +120,8 @@ server <- function(input, output) {
     output$rider_map <- renderLeaflet({
         leaflet(map_lines()) %>% ## 
             setView(lng = -71.056651, lat = 42.350461, zoom = 13) %>% 
+            addMapPane("base", zIndex = 400) %>%
+            addMapPane("highlight", zIndex = 410) %>%
             addProviderTiles(providers$CartoDB.DarkMatter, options = providerTileOptions(opacity = 0.8, noWrap = TRUE), group = "tiles") 
     }) 
     
@@ -128,9 +130,9 @@ server <- function(input, output) {
                  input$direction,
                  input$period), {
         leafletProxy('rider_map') %>% 
-                #addMarkers(lat = t_stops_sf$stop_lat, lng = t_stops_sf$stop_lon, icon = subwayIcon, group = 'T Stations') %>% 
-                addPolylines(data = key_lines, color = "yellow", weight = 3, group = 'Key Bus Lines') # %>%
-                #addPolylines(data = rail_lines, weight = 2, color = ~rail_pal(route_id), popup = paste(rail_lines$route_id), group = 'Rail Lines') 
+                addCircleMarkers(lat = t_stops$stop_lat, lng = t_stops$stop_lon, radius = 4, opacity = 1.0, group = 'T Stations', color = t_stops$color, fillColor = t_stops$color) %>%
+                addMarkers(lat = t_stops$stop_lat, lng = t_stops$stop_lon, icon = subwayIcon, group = 'T Stations', popup = (t_stops$stop_desc)) %>%
+                addPolylines(data = key_lines, color = "yellow", weight = 3, group = 'Key Bus Lines', opacity = 0.3)
             
             })
     
@@ -158,7 +160,7 @@ server <- function(input, output) {
             clearGroup(c("Selected Lines","Selected Stops")) %>%
             clearControls() %>%
             setView(lat = rider_viz()$stop_lat[index], lng = rider_viz()$stop_lon[index], zoom = 13) %>%
-            addPolylines(data = map_lines(), color = "white", weight = 3, group = 'Selected Lines') %>%
+            addPolylines(data = map_lines(), color = "white", weight = 3, group = 'Selected Lines', opacity = 1.0) %>%
             addCircleMarkers(data = rider_viz(), lng = rider_viz()$stop_lon, lat = rider_viz()$stop_lat, radius = rider_viz()$var, fillColor = ~rider_pal(rider_viz()$var), 
                                  color = ~rider_pal(rider_viz()$var), fillOpacity = 0.5, 
                                  popup = paste0("Stop: ", rider_viz()$stop_name, "<br>", var_txt(), " ", rider_viz()$var, "<br>", "Destination: ", rider_viz()$trip_headsign), 
@@ -166,10 +168,10 @@ server <- function(input, output) {
             addLegend(data = rider_viz(), position = "bottomleft", pal = rider_pal, values = rider_viz()$var, opacity = 0.6, title = var_txt(), group = "Legend") %>% 
             addLayersControl(
                 baseGroups = c("tiles"),
-                overlayGroups = c('Selected Lines','Selected Stops','Key Bus Lines'),
+                overlayGroups = c('Selected Lines','Selected Stops','Key Bus Lines','T Stations'),
                 options = layersControlOptions(collapsed = TRUE),
                 position = "topleft") %>%
-            hideGroup('Key Bus Lines')
+            hideGroup(c('Key Bus Lines'))
          
         })
     
@@ -285,8 +287,8 @@ ui <- navbarPage("MBTA Bus Ridership Explorer", id="nav",
                               #              ),
                               
                               fixedPanel(id = "controls", class = "panel panel-default", #fixed = TRUE,
-                                         draggable = TRUE, top = "auto", left = "auto", right = 20, bottom = 190,
-                                         width = "25%", height = "170px",
+                                         draggable = TRUE, top = "auto", left = "auto", right = 20, bottom = 187,
+                                         width = "25%", height = "160px",
                                          
                                          h4(strong("Route Profile")),
                                          plotOutput("profile", height = "80%", width = "100%")
@@ -294,8 +296,8 @@ ui <- navbarPage("MBTA Bus Ridership Explorer", id="nav",
                               ),
                               
                               fixedPanel(id = "controls", class = "panel panel-default", #fixed = TRUE,
-                                         draggable = TRUE, top = "auto", left = "auto", right = 20, bottom = 10,
-                                         width = "25%", height = "170px",
+                                         draggable = TRUE, top = "auto", left = "auto", right = 20, bottom = 7,
+                                         width = "25%", height = "160px",
                                          
                                          h4(strong("Reliability Comparison")),
                                          plotOutput("boxplot", height = "80%", width = "100%")
@@ -303,7 +305,15 @@ ui <- navbarPage("MBTA Bus Ridership Explorer", id="nav",
                               )
                               
                           )
-                 )
+                 ),
+                 
+                 tabPanel("About",
+                          
+                          p(''),
+                          p("Ridership data are from Fall 2019, accessed through", a("the MBTA Open Data Portal.", href = "https://mbta-massdot.opendata.arcgis.com/")), 
+                          p("Emmett McKinney visualized the data using Leaflet and R. View the source code", a("here.", href = "https://github.com/ezmckinn/mbta_bus_ridership")),
+                          p("Learn more about Emmett's work through his ", a("website", href = "https://www.emmettz.com"), "and find him on ", a("LinkedIn, ", href = "https://www.linkedin.com/in/emmettmckinney/"), a("GitHub, ", href = "https://github.com/ezmckinn/"), "or ", a("Twitter.", href = "https://twitter.com/EmmettMcKinney"))
+                 )  
 )        
 
 # Run the application 

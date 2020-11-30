@@ -26,8 +26,16 @@ Read in MBTA GTFS File
 ##Read in MBTA GTFS##
 
 gtfs <- read_gtfs("https://cdn.mbta.com/MBTA_GTFS.zip") 
+
+View(gtfs$route_patterns)
+
+
 gtfs_sf <- gtfs_as_sf(gtfs)
-lines <- get_route_geometry(gtfs_sf) %>% st_transform(4326)
+View(gtfs_sf$shapes)
+View(gtfs_sf$routes)
+
+View(gtfs_sf$trips)
+lines <- get_route_geometry(gtfs_sf, service_ids = service_id_) %>% st_transform(4326)
 st_write(lines, "bus_lines.geojson")
 ```
 
@@ -77,6 +85,34 @@ leaflet(t_stops_sf) %>% addProviderTiles(providers$CartoDB.DarkMatter) %>%
   
 ```
 
+```{r}
+#stops <- gtfs$stops  #  vehicle_type %in% c("0","1","2","3"))
+
+#zone_id == "RapidTransit" |
+
+t_stops <- gtfs$stops %>% filter(grepl("CR",zone_id) | grepl("SL",zone_id) | grepl("RapidTransit",zone_id))
+
+t_stops <- t_stops %>% mutate(color = 
+                                if_else(grepl( "Orange", stop_desc), "#ED8B00", #orange line
+                                  if_else(grepl("Red", stop_desc), "#DA291C", #red line
+                                    if_else(grepl("Green", stop_desc), "#00843D",#green line
+                                      if_else(grepl("Blue", stop_desc), "#003DA5", #blue line
+                                        if_else(grepl("Commuter Rail", stop_desc), "#80276C", #commuter rail
+                                            if_else(grepl("Silver Line", stop_desc), "#C9D3D8", "#FFFFFF") 
+                                              )       
+                                            )
+                                          )
+                                        )
+                                      )
+                                    ) %>%
+  select(c("stop_id","stop_name","platform_name","stop_desc","stop_lat","stop_lon","wheelchair_boarding","color"))
+                                   
+t_stops_color <- st_as_sf(t_stops, crs = 4326, coords = c("stop_lon","stop_lat"), remove = FALSE)
+
+plot(t_stops_color['color'])   
+
+st_write(t_stops_color, "t_stops_color.geojson")
+```
 
 
 C) Route + Line Geometries
@@ -97,8 +133,8 @@ stops_tbl <- gtfs$stops %>%
 
 stops_sf <- st_as_sf(stops_tbl, coords = c("stop_lon", "stop_lat"), 4326) 
 
-%>%
-  st_transform(4326)
+#%>%
+#  st_transform(4326)
 
 #Get human readable trip name
 trips <- gtfs$trips %>% select(route_id, direction_id, trip_headsign) %>% distinct_at(c("route_id", "direction_id", "trip_headsign"))
